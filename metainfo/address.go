@@ -346,46 +346,13 @@ func (a *Address) UnmarshalBinary(b []byte) (err error) {
 }
 
 // MarshalBinary implements the interface binary.BinaryMarshaler.
-func (a Address) MarshalBinary() ([]byte, error) {
-	switch ip := a.IP.(type) {
-	case *net.IPAddr:
-		if ip4 := ip.IP.To4(); len(ip4) == net.IPv4len {
-			buf := make([]byte, IPv4CompactLen)
-			copy(buf, ip4[:4])
-			binary.BigEndian.PutUint16(buf[4:], a.Port)
-			return buf, nil
-		} else if len(ip.IP) == net.IPv6len {
-			buf := make([]byte, IPv6CompactLen)
-			copy(buf, ip.IP[:16])
-			binary.BigEndian.PutUint16(buf[16:], a.Port)
-			return buf, nil
-		}
-		return nil, fmt.Errorf("unsupported IP length")
-
-	case *net.UDPAddr:
-		if ip4 := ip.IP.To4(); len(ip4) == net.IPv4len {
-			buf := make([]byte, IPv4CompactLen)
-			copy(buf, ip4[:4])
-			binary.BigEndian.PutUint16(buf[4:], a.Port)
-			return buf, nil
-		} else if len(ip.IP) == net.IPv6len {
-			buf := make([]byte, IPv6CompactLen)
-			copy(buf, ip.IP[:16])
-			binary.BigEndian.PutUint16(buf[16:], a.Port)
-			return buf, nil
-		}
-		return nil, fmt.Errorf("unsupported IP length")
-
-	case i2pkeys.I2PAddr:
-		dh := ip.DestHash()
-		buf := make([]byte, I2PCompactLen)
-		copy(buf, dh[:])
-		binary.BigEndian.PutUint16(buf[32:], a.Port)
-		return buf, nil
-
-	default:
-		return nil, fmt.Errorf("unknown address type %T", a.IP)
+func (a Address) MarshalBinary() (data []byte, err error) {
+	buf := bytes.NewBuffer(nil)
+	buf.Grow(20)
+	if _, err = a.WriteBinary(buf); err == nil {
+		data = buf.Bytes()
 	}
+	return
 }
 
 func (a *Address) decode(vs []interface{}) (err error) {

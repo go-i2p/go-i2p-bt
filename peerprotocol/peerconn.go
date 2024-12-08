@@ -616,19 +616,14 @@ func (pc *PeerConn) HandleMessage(msg Message, handler Handler) (err error) {
 
 func (pc *PeerConn) handleExtMsg(h Bep10Handler, m Message) (err error) {
 	if m.ExtendedID == ExtendedIDHandshake {
-		/*
-			if pc.extHandshake {
-				return ErrSecondExtHandshake
-			}
-
-		*/
 		pc.extHandshake = true
 
 		if err = bencode.DecodeBytes(m.ExtendedPayload, &pc.ExtendedHandshakeMsg); err != nil {
 			return err
 		}
 
-		if pexID, ok := pc.ExtendedHandshakeMsg.M["ut_pex"]; ok {
+		// Changed to look for "i2p_pex" instead of "ut_pex"
+		if pexID, ok := pc.ExtendedHandshakeMsg.M["i2p_pex"]; ok {
 			pc.PEXID = pexID
 		}
 
