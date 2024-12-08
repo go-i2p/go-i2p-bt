@@ -15,7 +15,6 @@
 package peerprotocol
 
 import (
-	"github.com/go-i2p/go-i2p-bt/metainfo"
 	"log"
 )
 
@@ -139,16 +138,4 @@ func (h MyPexHandler) OnPayload(pc *PeerConn, extid uint8, payload []byte) error
 		}
 	}
 	return nil
-}
-
-func parseCompactPeers(b []byte) []metainfo.Address {
-	var addrs []metainfo.Address
-	iplen := 6
-	for i := 0; i+iplen <= len(b); i += iplen {
-		var addr metainfo.Address
-		if err := addr.UnmarshalBinary(b[i : i+iplen]); err == nil {
-			addrs = append(addrs, addr)
-		}
-	}
-	return addrs
 }

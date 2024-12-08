@@ -641,32 +641,3 @@ func (pc *PeerConn) handleExtMsg(h Bep10Handler, m Message) (err error) {
 
 	return h.OnPayload(pc, m.ExtendedID, m.ExtendedPayload)
 }
-
-func (pc *PeerConn) SendPEX(peers []metainfo.Address, dropped []metainfo.Address) error {
-	if pc.PEXID == 0 {
-		// Peer does not support ut_pex
-		return nil
-	}
-	um := UtPexMsg{}
-	um.Added, um.AddedF = toCompactPeers(peers)
-	um.Dropped, um.DroppedF = toCompactPeers(dropped)
-	payload, err := bencode.EncodeBytes(um)
-	if err != nil {
-		return err
-	}
-	return pc.SendExtMsg(pc.PEXID, payload)
-}
-
-func toCompactPeers(peers []metainfo.Address) (added []byte, addedf []byte) {
-	for _, p := range peers {
-		b, err := p.MarshalBinary()
-		if err != nil {
-			continue
-		}
-		if len(b) == 6 {
-			added = append(added, b...)
-			addedf = append(addedf, 0x00) // seed flag or others can be set if needed
-		}
-	}
-	return
-}
