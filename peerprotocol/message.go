@@ -376,7 +376,8 @@ func (m Message) marshalBinaryType(buf *bytes.Buffer) (err error) {
 		}
 		_, err = buf.Write(m.Piece)
 	case MTypeExtended:
-		if err = buf.WriteByte(byte(m.ExtendedID)); err != nil {
+		err = buf.WriteByte(byte(m.ExtendedID))
+		if err == nil {
 			_, err = buf.Write(m.ExtendedPayload)
 		}
 	case MTypePort:
