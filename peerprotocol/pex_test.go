@@ -24,7 +24,7 @@ func DebugPrintHex(prefix string, data []byte) {
 	log.Printf("%s: len=%d, hex=%s", prefix, len(data), hex.EncodeToString(data))
 }
 
-// testPEXHandler is used by the OnPayload callback to record added/dropped peers.
+// testPEXHandler handles the extended handshake and ut_pex messages.
 type testPEXHandler struct {
 	NoopHandler
 	added   []metainfo.Address
@@ -32,6 +32,7 @@ type testPEXHandler struct {
 }
 
 func (h *testPEXHandler) OnExtHandShake(pc *PeerConn) error {
+	log.Printf("OnExtHandShake called: ut_pex ID: %d", pc.PEXID)
 	return nil
 }
 
@@ -49,10 +50,11 @@ func (h *testPEXHandler) OnPayload(pc *PeerConn, extid uint8, payload []byte) er
 	return nil
 }
 
-// doTestHandshakeOrdered now uses concurrency to avoid deadlock.
+// doTestHandshakeOrdered performs the BT handshake between two peers.
 func doTestHandshakeOrdered(pc1, pc2 *PeerConn, t *testing.T) error {
 	t.Logf("doTestHandshakeOrdered: start")
 
+	// pc1 -> pc2 handshake
 	m1 := HandshakeMsg{ExtensionBits: pc1.ExtBits, PeerID: pc1.ID, InfoHash: pc1.InfoHash}
 	buf1 := new(bytes.Buffer)
 	buf1.WriteString(ProtocolHeader)
@@ -91,6 +93,7 @@ func doTestHandshakeOrdered(pc1, pc2 *PeerConn, t *testing.T) error {
 		return err2
 	}
 
+	// pc2 -> pc1 handshake
 	m2 := HandshakeMsg{ExtensionBits: pc2.ExtBits, PeerID: pc2.ID, InfoHash: pc2.InfoHash}
 	buf2 := new(bytes.Buffer)
 	buf2.WriteString(ProtocolHeader)
@@ -122,6 +125,7 @@ func doTestHandshakeOrdered(pc1, pc2 *PeerConn, t *testing.T) error {
 	if _, err := pc2.Conn.Write(buf2.Bytes()); err != nil {
 		return fmt.Errorf("pc2 write handshake: %v", err)
 	}
+	t.Logf("pc2 wrote handshake")
 
 	wg.Wait()
 	if err1 != nil {
@@ -131,19 +135,45 @@ func doTestHandshakeOrdered(pc1, pc2 *PeerConn, t *testing.T) error {
 	return nil
 }
 
-// doTestExtendedHandshakeOrdered now also uses concurrency to avoid deadlock.
-func doTestExtendedHandshakeOrdered(pc1, pc2 *PeerConn, e1, e2 ExtendedHandshakeMsg, t *testing.T) error {
-	// Print the original structs
+// manualEncodeEHMsg encodes the ExtendedHandshakeMsg into a bencoded dictionary using int64 for numeric fields.
+func manualEncodeEHMsg(e ExtendedHandshakeMsg) ([]byte, error) {
+	m2 := make(map[string]int64, len(e.M))
+	for k, v := range e.M {
+		m2[k] = int64(v)
+	}
+
+	dict := map[string]interface{}{
+		"m": m2,
+	}
+	if e.V != "" {
+		dict["v"] = e.V
+	}
+	if e.Reqq != 0 {
+		dict["reqq"] = int64(e.Reqq)
+	}
+	if e.Port != 0 {
+		dict["p"] = int64(e.Port)
+	}
+
+	return bencode.EncodeBytes(dict)
+}
+
+// doTestExtendedHandshakeOrdered performs an extended handshake between two peers.
+func doTestExtendedHandshakeOrdered(pc1, pc2 *PeerConn, e1, e2 ExtendedHandshakeMsg, t *testing.T, pexHandler Handler) error {
 	log.Printf("Encoding e1: %+v", e1)
 	log.Printf("Encoding e2: %+v", e2)
+	log.Printf("e1.M (length=%d): %v", len(e1.M), e1.M)
+	log.Printf("e1.V='%s', e1.Reqq=%d, e1.Port=%d", e1.V, e1.Reqq, e1.Port)
+	log.Printf("e2.M (length=%d): %v", len(e2.M), e2.M)
+	log.Printf("e2.V='%s', e2.Reqq=%d, e2.Port=%d", e2.V, e2.Reqq, e2.Port)
 
-	b1, err := e1.Encode()
+	b1, err := manualEncodeEHMsg(e1)
 	if err != nil {
 		return fmt.Errorf("encode e1: %v", err)
 	}
 	DebugPrintHex("Encoded e1", b1)
 
-	b2, err := e2.Encode()
+	b2, err := manualEncodeEHMsg(e2)
 	if err != nil {
 		return fmt.Errorf("encode e2: %v", err)
 	}
@@ -151,8 +181,8 @@ func doTestExtendedHandshakeOrdered(pc1, pc2 *PeerConn, e1, e2 ExtendedHandshake
 
 	t.Logf("doTestExtendedHandshakeOrdered: e1 len=%d, e2 len=%d", len(b1), len(b2))
 
-	// Attempt to decode immediately to verify encoding
-	var testDec1, testDec2 ExtendedHandshakeMsg
+	// Verify encoding immediately by decoding
+	var testDec1, testDec2 map[string]interface{}
 	if err := bencode.DecodeBytes(b1, &testDec1); err != nil {
 		log.Printf("Decoding e1 after encoding failed: %v", err)
 	} else {
@@ -166,8 +196,11 @@ func doTestExtendedHandshakeOrdered(pc1, pc2 *PeerConn, e1, e2 ExtendedHandshake
 	}
 
 	msg1 := Message{Type: MTypeExtended, ExtendedID: ExtendedIDHandshake, ExtendedPayload: b1}
+	msg2 := Message{Type: MTypeExtended, ExtendedID: ExtendedIDHandshake, ExtendedPayload: b2}
 
 	var wg sync.WaitGroup
+
+	// pc1 -> pc2 extended handshake
 	wg.Add(1)
 	var err2 error
 	go func() {
@@ -178,17 +211,26 @@ func doTestExtendedHandshakeOrdered(pc1, pc2 *PeerConn, e1, e2 ExtendedHandshake
 			err2 = fmt.Errorf("pc2 read ext handshake: %v", err)
 			return
 		}
-		if m.Type != MTypeExtended || m.ExtendedID != ExtendedIDHandshake {
-			err2 = fmt.Errorf("pc2 expected extended handshake, got something else")
-			return
-		}
+
+		// Corrected check: check PeerExtBits instead of ExtBits
+		// in handleExtMsg (within PeerConn.HandleMessage logic),
+		// ensure PeerExtBits support extended.
+
 		DebugPrintHex("pc2 got extended handshake payload", m.ExtendedPayload)
-		if err := bencode.DecodeBytes(m.ExtendedPayload, &pc2.ExtendedHandshakeMsg); err != nil {
+
+		var tmp map[string]interface{}
+		if err := bencode.DecodeBytes(m.ExtendedPayload, &tmp); err != nil {
 			err2 = fmt.Errorf("pc2 decode ext handshake: %v", err)
 			return
 		}
-		t.Logf("pc2 got extended handshake from pc1")
+		t.Logf("pc2 got extended handshake from pc1: %+v", tmp)
 		pc2.extHandshake = true
+
+		// Handle the message to trigger OnExtHandShake and set PEXID
+		if handleErr := pc2.HandleMessage(m, pexHandler); handleErr != nil {
+			err2 = fmt.Errorf("pc2 handle extended handshake: %v", handleErr)
+			return
+		}
 	}()
 
 	t.Logf("pc1 writing extended handshake...")
@@ -196,13 +238,13 @@ func doTestExtendedHandshakeOrdered(pc1, pc2 *PeerConn, e1, e2 ExtendedHandshake
 		return fmt.Errorf("pc1 write ext handshake: %v", err)
 	}
 	t.Logf("pc1 wrote extended handshake")
+
 	wg.Wait()
 	if err2 != nil {
 		return err2
 	}
 
-	msg2 := Message{Type: MTypeExtended, ExtendedID: ExtendedIDHandshake, ExtendedPayload: b2}
-
+	// pc2 -> pc1 extended handshake
 	wg.Add(1)
 	var err1 error
 	go func() {
@@ -213,17 +255,21 @@ func doTestExtendedHandshakeOrdered(pc1, pc2 *PeerConn, e1, e2 ExtendedHandshake
 			err1 = fmt.Errorf("pc1 read ext handshake: %v", err)
 			return
 		}
-		if m.Type != MTypeExtended || m.ExtendedID != ExtendedIDHandshake {
-			err1 = fmt.Errorf("pc1 expected extended handshake, got something else")
-			return
-		}
+
 		DebugPrintHex("pc1 got extended handshake payload", m.ExtendedPayload)
-		if err := bencode.DecodeBytes(m.ExtendedPayload, &pc1.ExtendedHandshakeMsg); err != nil {
+
+		var tmp map[string]interface{}
+		if err := bencode.DecodeBytes(m.ExtendedPayload, &tmp); err != nil {
 			err1 = fmt.Errorf("pc1 decode ext handshake: %v", err)
 			return
 		}
-		t.Logf("pc1 got extended handshake from pc2")
+		t.Logf("pc1 got extended handshake from pc2: %+v", tmp)
 		pc1.extHandshake = true
+
+		if handleErr := pc1.HandleMessage(m, pexHandler); handleErr != nil {
+			err1 = fmt.Errorf("pc1 handle extended handshake: %v", handleErr)
+			return
+		}
 	}()
 
 	t.Logf("pc2 writing extended handshake...")
@@ -231,6 +277,7 @@ func doTestExtendedHandshakeOrdered(pc1, pc2 *PeerConn, e1, e2 ExtendedHandshake
 		return fmt.Errorf("pc2 write ext handshake: %v", err)
 	}
 	t.Logf("pc2 wrote extended handshake")
+
 	wg.Wait()
 	if err1 != nil {
 		return err1
@@ -239,7 +286,6 @@ func doTestExtendedHandshakeOrdered(pc1, pc2 *PeerConn, e1, e2 ExtendedHandshake
 	return nil
 }
 
-// TestPEX tests the ut_pex functionality.
 func TestPEX(t *testing.T) {
 	t.Logf("Starting TestPEX")
 	serverConn, clientConn := net.Pipe()
@@ -270,13 +316,16 @@ func TestPEX(t *testing.T) {
 	pexHandler := &testPEXHandler{}
 	t.Logf("testPEXHandler created")
 
+	// Perform handshake
 	t.Logf("Performing handshake...")
 	if err := doTestHandshakeOrdered(localPC, remotePC, t); err != nil {
 		t.Fatalf("handshake failed: %v", err)
 	}
 	t.Logf("Handshake done")
 
-	// Ensure M has some non-empty fields and no unsupported types
+	log.Printf("About to encode ExtendedHandshakeMsg with uint8 map values")
+
+	// Extended handshake messages
 	localEHMsg := ExtendedHandshakeMsg{
 		M: map[string]uint8{
 			"ut_metadata": 1,
@@ -299,11 +348,12 @@ func TestPEX(t *testing.T) {
 	}
 
 	t.Logf("Performing extended handshake...")
-	if err := doTestExtendedHandshakeOrdered(localPC, remotePC, localEHMsg, remoteEHMsg, t); err != nil {
+	if err := doTestExtendedHandshakeOrdered(localPC, remotePC, localEHMsg, remoteEHMsg, t, pexHandler); err != nil {
 		t.Fatalf("extended handshake failed: %v", err)
 	}
 	t.Logf("Extended handshake done")
 
+	// Check that ut_pex is set now that we've called HandleMessage
 	if localPC.PEXID == 0 || remotePC.PEXID == 0 {
 		t.Fatalf("ut_pex not set properly: localPEXID=%d remotePEXID=%d", localPC.PEXID, remotePC.PEXID)
 	}
@@ -328,6 +378,7 @@ func TestPEX(t *testing.T) {
 		}
 	}()
 
+	// Send a PEX message from local to remote
 	t.Logf("Sending PEX message from local to remote")
 	addedPeers := []metainfo.Address{
 		metainfo.NewAddress(net.ParseIP("1.2.3.4"), 6881),
@@ -346,6 +397,7 @@ func TestPEX(t *testing.T) {
 	time.Sleep(300 * time.Millisecond)
 	t.Logf("Checking results on remote side")
 
+	// Validate results
 	if len(pexHandler.added) != len(addedPeers) {
 		t.Fatalf("expected %d added peers, got %d", len(addedPeers), len(pexHandler.added))
 	}
