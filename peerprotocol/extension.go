@@ -19,8 +19,8 @@ import (
 	"errors"
 	"net"
 
-	"github.com/go-i2p/i2pkeys"
 	"github.com/go-i2p/go-i2p-bt/bencode"
+	"github.com/go-i2p/i2pkeys"
 )
 
 var errInvalidIP = errors.New("invalid ipv4 or ipv6")
