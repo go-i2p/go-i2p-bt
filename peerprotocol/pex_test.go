@@ -1,3 +1,5 @@
+// pex_test.go
+
 package peerprotocol
 
 import (
@@ -13,6 +15,7 @@ import (
 
 	"github.com/go-i2p/go-i2p-bt/bencode"
 	"github.com/go-i2p/go-i2p-bt/metainfo"
+	"github.com/go-i2p/i2pkeys"
 )
 
 // DebugPrintHex prints the hex representation of data for debugging.
@@ -24,7 +27,7 @@ func DebugPrintHex(prefix string, data []byte) {
 	log.Printf("%s: len=%d, hex=%s", prefix, len(data), hex.EncodeToString(data))
 }
 
-// testPEXHandler handles the extended handshake and ut_pex messages.
+// testPEXHandler handles the extended handshake and i2p_pex messages.
 type testPEXHandler struct {
 	NoopHandler
 	added   []metainfo.Address
@@ -32,19 +35,19 @@ type testPEXHandler struct {
 }
 
 func (h *testPEXHandler) OnExtHandShake(pc *PeerConn) error {
-	log.Printf("OnExtHandShake called: ut_pex ID: %d", pc.PEXID)
+	log.Printf("OnExtHandShake called: i2p_pex ID: %d", pc.PEXID)
 	return nil
 }
 
 func (h *testPEXHandler) OnPayload(pc *PeerConn, extid uint8, payload []byte) error {
 	if extid == pc.PEXID && pc.PEXID != 0 {
-		um, err := DecodePexMsg(payload)
+		um, err := DecodeI2pPexMsg(payload)
 		if err != nil {
 			return err
 		}
-		newPeers := parseCompactPeers(um.Added)
+		newPeers := parseI2pCompactPeers(um.Added)
 		h.added = append(h.added, newPeers...)
-		remPeers := parseCompactPeers(um.Dropped)
+		remPeers := parseI2pCompactPeers(um.Dropped)
 		h.dropped = append(h.dropped, remPeers...)
 	}
 	return nil
@@ -212,10 +215,6 @@ func doTestExtendedHandshakeOrdered(pc1, pc2 *PeerConn, e1, e2 ExtendedHandshake
 			return
 		}
 
-		// Corrected check: check PeerExtBits instead of ExtBits
-		// in handleExtMsg (within PeerConn.HandleMessage logic),
-		// ensure PeerExtBits support extended.
-
 		DebugPrintHex("pc2 got extended handshake payload", m.ExtendedPayload)
 
 		var tmp map[string]interface{}
@@ -325,11 +324,11 @@ func TestPEX(t *testing.T) {
 
 	log.Printf("About to encode ExtendedHandshakeMsg with uint8 map values")
 
-	// Extended handshake messages
+	// Extended handshake messages with "i2p_pex"
 	localEHMsg := ExtendedHandshakeMsg{
 		M: map[string]uint8{
 			"ut_metadata": 1,
-			"ut_pex":      2,
+			"i2p_pex":     2,
 			"dummy":       42,
 		},
 		V:    "nonempty",
@@ -339,7 +338,7 @@ func TestPEX(t *testing.T) {
 	remoteEHMsg := ExtendedHandshakeMsg{
 		M: map[string]uint8{
 			"ut_metadata": 1,
-			"ut_pex":      2,
+			"i2p_pex":     2,
 			"dummy":       42,
 		},
 		V:    "nonempty",
@@ -353,9 +352,9 @@ func TestPEX(t *testing.T) {
 	}
 	t.Logf("Extended handshake done")
 
-	// Check that ut_pex is set now that we've called HandleMessage
+	// Check that i2p_pex is set now that we've called HandleMessage
 	if localPC.PEXID == 0 || remotePC.PEXID == 0 {
-		t.Fatalf("ut_pex not set properly: localPEXID=%d remotePEXID=%d", localPC.PEXID, remotePC.PEXID)
+		t.Fatalf("i2p_pex not set properly: localPEXID=%d remotePEXID=%d", localPC.PEXID, remotePC.PEXID)
 	}
 	t.Logf("PEXID local=%d remote=%d", localPC.PEXID, remotePC.PEXID)
 
@@ -378,18 +377,38 @@ func TestPEX(t *testing.T) {
 		}
 	}()
 
-	// Send a PEX message from local to remote
-	t.Logf("Sending PEX message from local to remote")
-	addedPeers := []metainfo.Address{
-		metainfo.NewAddress(net.ParseIP("1.2.3.4"), 6881),
-		metainfo.NewAddress(net.ParseIP("5.6.7.8"), 6882),
+	// For i2p_pex, we must provide 32-byte I2P hashes.
+	// Here we provide dummy 32-byte data. In real tests, use valid I2P desthashes.
+	dummyHash1 := make([]byte, 32)
+	for i := 0; i < 32; i++ {
+		dummyHash1[i] = 0x01
 	}
-	droppedPeers := []metainfo.Address{
-		metainfo.NewAddress(net.ParseIP("9.10.11.12"), 6883),
+	i2pAddr1, _ := i2pkeys.DestHashFromBytes(dummyHash1)
+
+	dummyHash2 := make([]byte, 32)
+	for i := 0; i < 32; i++ {
+		dummyHash2[i] = 0x02
+	}
+	i2pAddr2, _ := i2pkeys.DestHashFromBytes(dummyHash2)
+
+	addedPeers := []metainfo.Address{
+		{IP: i2pAddr1, Port: 6881},
+		{IP: i2pAddr2, Port: 6881},
 	}
 
+	dummyHashDrop := make([]byte, 32)
+	for i := 0; i < 32; i++ {
+		dummyHashDrop[i] = 0x03
+	}
+	i2pAddrDrop, _ := i2pkeys.DestHashFromBytes(dummyHashDrop)
+
+	droppedPeers := []metainfo.Address{
+		{IP: i2pAddrDrop, Port: 6881},
+	}
+
+	t.Logf("Sending PEX message from local to remote")
 	t.Logf("localPC SendPEX...")
-	if err := localPC.SendPEX(addedPeers, droppedPeers); err != nil {
+	if err := localPC.SendI2PPEX(addedPeers, droppedPeers); err != nil {
 		t.Fatalf("SendPEX failed: %v", err)
 	}
 	t.Logf("PEX message sent. Waiting for remote to process...")
