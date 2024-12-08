@@ -196,12 +196,10 @@ func (um *UtMetadataExtendedMsg) DecodeFromPayload(b []byte) (err error) {
 
 // UtPexMsg represents the "ut_pex" extended message payload (BEP 11).
 type UtPexMsg struct {
-	Added    []byte `bencode:"added,omitempty"`
-	AddedF   []byte `bencode:"added.f,omitempty"`
-	Dropped  []byte `bencode:"dropped,omitempty"`
-	Added6   []byte `bencode:"added6,omitempty"`
-	Added6F  []byte `bencode:"added6.f,omitempty"`
-	Dropped6 []byte `bencode:"dropped6,omitempty"`
+	Added    []byte `bencode:"added"`
+	AddedF   []byte `bencode:"added.f"`
+	Dropped  []byte `bencode:"dropped"`
+	DroppedF []byte `bencode:"dropped.f"`
 }
 
 // DecodePexMsg decodes a "ut_pex" message.
