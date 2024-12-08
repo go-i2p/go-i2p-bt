@@ -649,7 +649,7 @@ func (pc *PeerConn) SendPEX(peers []metainfo.Address, dropped []metainfo.Address
 	}
 	um := UtPexMsg{}
 	um.Added, um.AddedF = toCompactPeers(peers)
-	um.Dropped, _ = toCompactPeers(dropped)
+	um.Dropped, um.DroppedF = toCompactPeers(dropped)
 	payload, err := bencode.EncodeBytes(um)
 	if err != nil {
 		return err
