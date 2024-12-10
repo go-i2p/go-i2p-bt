@@ -23,9 +23,15 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-i2p/i2pkeys"
 	"github.com/go-i2p/go-i2p-bt/bencode"
 	"github.com/go-i2p/go-i2p-bt/utils"
+	"github.com/go-i2p/i2pkeys"
+)
+
+const (
+	IPv4CompactLen = 6
+	IPv6CompactLen = 18
+	I2PCompactLen  = 34
 )
 
 // ErrInvalidAddr is returned when the compact address is invalid.

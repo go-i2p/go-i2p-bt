@@ -14,6 +14,10 @@
 
 package peerprotocol
 
+import (
+	"log"
+)
+
 var _ Handler = NoopHandler{}
 var _ Bep3Handler = NoopBep3Handler{}
 var _ Bep5Handler = NoopBep5Handler{}
@@ -104,3 +108,34 @@ func (NoopBep10Handler) OnExtHandShake(*PeerConn) error { return nil }
 
 // OnPayload implements the interface Bep10Handler#OnPayload.
 func (NoopBep10Handler) OnPayload(*PeerConn, uint8, []byte) error { return nil }
+
+type MyI2pPexHandler struct {
+	NoopHandler
+}
+
+func (h MyI2pPexHandler) OnExtHandShake(pc *PeerConn) error {
+	log.Printf("Received extended handshake from %s. i2p_pex ID: %d", pc.RemoteAddr().String(), pc.PEXID)
+	return nil
+}
+
+func (h MyI2pPexHandler) OnPayload(pc *PeerConn, extid uint8, payload []byte) error {
+	if extid == pc.PEXID && pc.PEXID != 0 {
+		um, err := DecodeI2pPexMsg(payload)
+		if err != nil {
+			return err
+		}
+
+		addedPeers := parseI2pCompactPeers(um.Added)
+		for _, addr := range addedPeers {
+			log.Printf("I2P PEX: Learned new peer %s", addr.String())
+			// Add to known peers
+		}
+
+		droppedPeers := parseI2pCompactPeers(um.Dropped)
+		for _, addr := range droppedPeers {
+			log.Printf("I2P PEX: Peer dropped %s", addr.String())
+			// Remove from known peers
+		}
+	}
+	return nil
+}

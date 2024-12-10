@@ -153,6 +153,8 @@ type PeerConn struct {
 
 	notFirstMsg  bool
 	extHandshake bool
+
+	PEXID uint8 // 0 means not supported
 }
 
 // NewPeerConn returns a new PeerConn.
@@ -586,15 +588,20 @@ func (pc *PeerConn) HandleMessage(msg Message, handler Handler) (err error) {
 		}
 
 	// BEP 10 - Extension Protocol
-	case MTypeExtended:
-		if !pc.ExtBits.IsSupportExtended() {
-			err = ErrNotSupportExtended
-		} else if h, ok := handler.(Bep10Handler); ok {
+	case MTypeExtended: /*
+			if !pc.ExtBits.IsSupportExtended() {
+				err = ErrNotSupportExtended
+			} else if h, ok := handler.(Bep10Handler); ok {
+				err = pc.handleExtMsg(h, msg)
+			} else {
+				err = handler.OnMessage(pc, msg)
+			}
+		*/
+		if h, ok := handler.(Bep10Handler); ok {
 			err = pc.handleExtMsg(h, msg)
 		} else {
 			err = handler.OnMessage(pc, msg)
 		}
-
 	// Other
 	default:
 		err = handler.OnMessage(pc, msg)
@@ -609,20 +616,23 @@ func (pc *PeerConn) HandleMessage(msg Message, handler Handler) (err error) {
 
 func (pc *PeerConn) handleExtMsg(h Bep10Handler, m Message) (err error) {
 	if m.ExtendedID == ExtendedIDHandshake {
-		if pc.extHandshake {
-			return ErrSecondExtHandshake
+		pc.extHandshake = true
+
+		if err = bencode.DecodeBytes(m.ExtendedPayload, &pc.ExtendedHandshakeMsg); err != nil {
+			return err
 		}
 
-		pc.extHandshake = true
-		err = bencode.DecodeBytes(m.ExtendedPayload, &pc.ExtendedHandshakeMsg)
-		if err == nil {
-			err = h.OnExtHandShake(pc)
+		// Changed to look for "i2p_pex" instead of "ut_pex"
+		if pexID, ok := pc.ExtendedHandshakeMsg.M["i2p_pex"]; ok {
+			pc.PEXID = pexID
 		}
-	} else if pc.extHandshake {
-		err = h.OnPayload(pc, m.ExtendedID, m.ExtendedPayload)
-	} else {
-		err = ErrNoExtHandshake
+
+		return h.OnExtHandShake(pc)
 	}
 
-	return
+	if !pc.extHandshake {
+		return ErrNoExtHandshake
+	}
+
+	return h.OnPayload(pc, m.ExtendedID, m.ExtendedPayload)
 }
